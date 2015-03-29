@@ -9,7 +9,6 @@
   </parent>
   <groupId>com.propn.golf.bpmn</groupId>
   <artifactId>bpmn2-designer</artifactId>
-  <version>0.0.1-SNAPSHOT</version>
   <name>bpmn2-designer</name>
   <url>http://maven.apache.org</url>
   <properties>
