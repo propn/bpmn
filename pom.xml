@@ -27,5 +27,6 @@
     <module>bpmn2-designer</module>
     <module>bpmn-monitor</module>
     <module>bpmn-engine</module>
+    <module>form-designer</module>
   </modules>
 </project>
