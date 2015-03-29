@@ -2,3 +2,5 @@
 /bpmn2-viewer/.settings
 /bpmn-engine/.settings
 /bpmn-monitor
+/bpmn2-designer/target
+/bpmn-engine/target
