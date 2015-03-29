@@ -1,0 +1,402 @@
+/**
+ * BPMN2.0 rendering for JavaScript 
+ * #Requires 
+ * xml.js 
+ * snap.svg.js
+ */
+
+Bpmn2 = function(canvas, editable, highlighted) {
+	// view model or edit model
+	this.editable = editable;
+	// List of element ids for highlighting
+	this.highlighted = highlighted;
+	// Paint canvas
+	// alert(canvas.clientWidth + ' '+ canvas.clientHeight);
+	this.paper = Raphael(canvas, canvas.clientWidth, canvas.clientHeight);
+	// BPMNDI namespace name
+	this.bpmndi = "";
+}
+
+// Shared functions
+Bpmn2.prototype = {
+	plot : function(xml) {
+		// initialize XML Parser
+		var strict = true;
+		var opt = {
+			'trim' : true,
+			'normalize' : true,
+			'lowercase' : true,
+			'xmlns' : true,
+			'position' : false
+		};
+		var parser = sax.parser(strict, opt);
+
+		// global variates
+		var bpmnElements = {};
+		var shapes = [];
+		var edges = [];
+		var lables = {};
+		//
+		var node = null;
+		var currentTag = null;
+		//
+		parser.onopentag = function(tag) {
+			if (tag.name === "bpmndi:BPMNShape" || tag.name === "bpmn2:process" || tag.name === "bpmndi:BPMNEdge") {
+				node = tag
+			}
+			tag.parent = currentTag
+			tag.children = []
+			tag.parent && tag.parent.children.push(tag);
+			currentTag = tag;
+		}
+
+		parser.onclosetag = function(tagName) {
+			// bpmn2:process
+			if (tagName === "bpmn2:process") {
+				console.log(node);
+				for (var i = 0; i < node.children.length; i++) {
+					var bpmnElement = node.children[i];
+					var id = bpmnElement.attributes.id.value;
+					bpmnElements[id] = bpmnElement;
+				}
+				currentTag = node = null;
+				return;			}
+			// bpmndi:BPMNShape
+			if (tagName === "bpmndi:BPMNShape") {
+				console.log(node);
+				shapes.push(node);
+				currentTag = node = null;
+				return;			}
+			// bpmndi:BPMNEdge
+			if (tagName === "bpmndi:BPMNEdge") {
+				console.log(node);
+				edges.push(node);
+				currentTag = node = null;
+				return;			}
+
+			if (currentTag && currentTag.parent) {
+				var p = currentTag.parent;
+				delete currentTag.parent;
+				currentTag = p
+			}
+		},
+
+		parser.ontext = function(text) {
+			if (currentTag)
+				currentTag.children.push(text)
+		},
+
+		// start parsing xml
+		parser.write(xml);
+
+		// Draw shapes
+		for (var i = 0; i < shapes.length; i++) {
+			var shape = shapes[i];
+			var x = shape.children[0].attributes.x.value;
+			var y = shape.children[0].attributes.y.value;
+			x = parseInt(x.substring(0, x.indexOf(".")));
+			y = parseInt(y.substring(0, y.indexOf(".")));
+			
+			var width = parseInt(shape.children[0].attributes.width.value);
+			var height = parseInt(shape.children[0].attributes.height.value);
+			
+			var elementId = shape.attributes.bpmnElement.value;
+			var element = bpmnElements[elementId];
+			//
+			this.paintShape(element, shape, x, y, width, height);
+			// Label
+			if (shape.children.length > 1) {
+				var id = shape.attributes.id.value;
+				lables[id] = shape.children[1]; //
+			}
+		};
+
+		// Draw edges
+		for (var i = 0; i < edges.length; i++) {
+			var edge = edges[i];
+			var path = "";
+			var childs = edge.children;
+			for (var t = 0; t < childs.length; t++) {
+				var startX, startY;
+				// Edge's Label
+				if (childs[t].attributes.x == undefined) {
+					var id = edge.attributes.id.value;
+					lables[id] = childs[t];
+					continue;
+				};
+				console.log(childs[t].attributes.x);
+				var x1 = childs[t].attributes.x.value;
+				var y1 = childs[t].attributes.y.value;
+				x1 = parseInt(x1.substring(0, x1.indexOf(".")));
+				y1 = parseInt(y1.substring(0, y1.indexOf(".")));
+				if (path === "") {
+					path = "M" + x1 + " " + y1;
+					startX = x1;
+					startY = y1;
+				} else {
+					path += "L" + x1 + " " + y1;
+				}
+			}
+			var elementId = edge.attributes.bpmnElement.value;
+			var element = bpmnElements[elementId];
+			this.paintEdge(element, edge, path, startX, startY);
+		}
+	},
+
+	/* Draw Line */
+	paintEdge : function(element, edge, path, x, y) {
+		//console.log(path);
+		//console.log(element);
+		var path = this.paper.path(path);
+		//Add class
+		var elementType = element.local;
+		if (elementType == "messageFlow") {
+			$(path.node).attr("stroke-dasharray", "5,5");
+		}
+		path.attr({
+			'arrow-end' : 'classic-wide-long'
+		});
+		//
+		var elementId =  element.attributes.id.value;
+		var css = this.getCss(elementId, "edge")
+		$(path.node).attr("class", css);
+		// add text
+		var name = '';
+		if (element.attributes.name != undefined) {
+			name = element.attributes.name.value;
+			this.paper.text(x + 15, y + 10, name);
+		}
+	},
+
+	/* Draw Shape */
+	paintShape : function(element, shape, x, y, width, height) {
+		console.log(element);
+		var elementType = element.local;
+		var elementId =  element.attributes.id.value;
+		switch (elementType) {
+		case "startEvent":
+			this.paintStartEvent(x, y, width, height, element);
+			break;
+		case "endEvent":
+			this.paintEndEvent(x, y, width, height, element);
+			break;
+		case "participant":
+			this.paintParticipant(x, y, width, height, element);
+			break;
+		case "lane":
+			this.paintLane(x, y, width, height, element);
+			break;
+		case "serviceTask":
+		case "scriptTask":
+		case "userTask":
+		case "task":
+			this.paintTask(x, y, width, height, element);
+			break;
+		case "sendTask":
+			this.paintSendTask(x, y, width, height, element);
+			break;
+		case "receiveTask":
+			this.paintReceiveTask(x, y, width, height, element);
+			break;
+		case "exclusiveGateway":
+			this.paintExclusiveGateway(x, y, width, height, element);
+			break;
+		case "inclusiveGateway":
+			this.paintInclusiveGateway(x, y, width, height, element);
+			break;
+		case "parallelGateway":
+			this.paintParallelGateway(x, y, width, height, element);
+			break;
+		case "boundaryEvent":
+			this.paintBoundaryEvent(x, y, width, height, element);
+			break;
+		case "subProcess":
+			this.paintSubProcess(x, y, width, height, element);
+			break;
+		case "textAnnotation":
+			this.paintTextAnnotation(x, y, width, height, element);
+			break;
+		case "dataStoreReference":
+			this.paintDataStoreReference(x, y, width, height, element);
+			break;
+		default:
+			this.paintDefault(x, y, width, height, element);
+			break;
+		}
+	},
+
+	paintStartEvent : function(x, y, width, height, element) {
+		var shape = this.paper.circle(x + width / 2, y + height / 2, height / 2);
+		// add class
+		var elementType = element.local;
+		var elementId =  element.attributes.id.value;
+		var css = this.getCss(elementId, elementType);
+		$(shape.node).attr("class", css);
+		//
+//		var lx = shape.children[0].attributes.x.value;
+//		var ly = shape.children[0].attributes.y.value;
+//		x = parseInt(lx.substring(0, lx.indexOf(".")));
+//		y = parseInt(ly.substring(0, ly.indexOf(".")));
+		//
+//		var lw = parseInt(shape.children[1].children[0].attributes.width.value);
+//		var lh = parseInt(shape.children[1].children[0].attributes.height.value);
+		// var id = shape.attributes.id.value;
+//		this.paintLabel(x, y, lw, lh, bpmnElements[elementId]);
+	},
+
+	paintEndEvent : function(x, y, width, height, element, elementType, bpmnElement) {
+		var shape = this.paper.circle(x + width / 2, y + height / 2, height / 2);
+		var elementType = element.local;
+		var css = this.getCss(bpmnElement, elementType)
+		$(shape.node).attr("class", css);
+	},
+
+	paintTask : function(x, y, width, height, element) {
+		// paint shape
+		var shape = this.paper.rect(x, y, width, height, 5);
+		// add name
+		var name = element.attributes.name.value;
+		var re = new RegExp(' ', 'g');
+		name = name.replace(re, '\n');
+		this.paper.text(x + width / 2, y + height / 2, name);
+		// add interactivity
+		shape.hover(function() {
+			shape.transform('S1.2')
+		}, function() {
+			shape.transform('S1')
+		})
+		shape.click(function() {
+			alert(name)
+		});
+		// apply css
+		elementId = element.attributes.id.value;
+		var elementType = element.local;
+		var css = this.getCss(elementId, elementType)
+		$(shape.node).attr("class", css);
+	},
+
+	paintParticipant : function(x, y, width, height, element) {
+		var name = this.getElementName(element);
+		var shape = this.paper.rect(x, y, width, height);
+		$(shape.node).attr("class", "participant");
+		this.paper.text(x + 15, y + height / 2, name).transform("r270");
+	},
+
+	paintLane : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height);
+		$(shape.node).attr("class", "lane");
+	},
+
+	paintExclusiveGateway : function(x, y, width, height, element) {
+		var name = element.attributes.name.value;
+		var h2 = height / 2;
+		var w2 = width / 2;
+		var w = width;
+		var h = height;
+		var path = "M" + (x + w2) + " " + (y) + "L" + (x + w) + " " + (y + h2) + "L" + (x + w2) + " " + (y + h) + "L" + (x) + " " + (y + h2) + "L" + (x + w2) + " " + (y);
+		var shape = this.paper.path(path);
+		this.paper.text(x + width / 2, y + height / 2, 'X').attr({
+			'font-size' : 16,
+			'font-weight' : 'bold'
+		});
+		this.paper.text(x + width / 2, y - 10, name);
+		$(shape.node).attr("class", "exclusiveGateway");
+	},
+
+	paintInclusiveGateway : function(x, y, width, height, element) {
+		var name = element.attributes.name.value;
+		var h2 = height / 2;
+		var w2 = width / 2;
+		var w = width;
+		var h = height;
+		var path = "M" + (x + w2) + " " + (y) + "L" + (x + w) + " " + (y + h2) + "L" + (x + w2) + " " + (y + h) + "L" + (x) + " " + (y + h2) + "L" + (x + w2) + " " + (y);
+		var shape = this.paper.path(path);
+		this.paper.text(x + width / 2, y + height / 2, 'O').attr({
+			'font-size' : 16,
+			'font-weight' : 'bold'
+		});
+		this.paper.text(x + width / 2, y - 10, name);
+		$(shape.node).attr("class", "inclusiveGateway");
+	},
+
+	paintParallelGateway : function(x, y, width, height, element) {
+		var name = element.attributes.name.value;
+		var h2 = height / 2;
+		var w2 = width / 2;
+		var w = width;
+		var h = height;
+		var path = "M" + (x + w2) + " " + (y) + "L" + (x + w) + " " + (y + h2) + "L" + (x + w2) + " " + (y + h) + "L" + (x) + " " + (y + h2) + "L" + (x + w2) + " " + (y);
+		var shape = this.paper.path(path);
+		this.paper.text(x + width / 2, y + height / 2, '+').attr({
+			'font-size' : 16,
+			'font-weight' : 'bold'
+		});
+		this.paper.text(x + width / 2, y - 10, name);
+		$(shape.node).attr("class", "parallelGateway");
+	},
+
+	paintSubProcess : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height, 5);
+		$(shape.node).attr("class", "subProcess");
+	},
+
+	paintBoundaryEvent : function(x, y, width, height, element) {
+		var shape = this.paper.circle(x + width / 2, y + height / 2, width / 2);
+		$(shape.node).attr("class", "boundaryEvent");
+	},
+
+	paintReceiveTask : function(x, y, width, height, element) {
+		// draw task shape
+		this.paintTask(x, y, width, height, element);
+		// draw envelope
+		this.paper.rect(x + 10, y + 10, 20, 15);
+		this.paper.path("M" + (x + 10) + " " + (y + 10) + "L" + (x + 20) + " " + (y + 20) + "L" + (x + 30) + " " + (y + 10));
+	},
+
+	paintSendTask : function(x, y, width, height, element) {
+		this.paintTask(x, y, width, height, element);
+		this.paper.rect(x + 10, y + 10, 20, 15).attr("fill", "black");
+		this.paper.path("M" + (x + 10) + " " + (y + 10) + "L" + (x + 20) + " " + (y + 20) + "L" + (x + 30) + " " + (y + 10)).attr("stroke", "white");
+	},
+
+	paintDataStoreReference : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height, 5);
+		$(shape.node).attr("class", "dataStoreReference");
+	},
+
+	paintTextAnnotation : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height);
+		var text = element.getFirstChild().getFirstChild().getNodeValue();
+		var re = new RegExp(' ', 'g');
+		text = text.replace(re, '\n');
+		this.paper.text(x + width / 2, y + height / 2, text).attr({
+			'font-size' : 8
+		});
+		$(shape.node).attr("class", "textAnnotation");
+		$(this.paper.path("M" + x + " " + y + "L" + (x + width / 2) + " " + y).node).attr("stroke-dasharray", "5,5");
+		$(this.paper.path("M" + x + " " + y + "L" + x + " " + (y + height / 2)).node).attr("stroke-dasharray", "5,5");
+	},
+
+	paintDefault : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height, 5);
+		this.paper.text(x + 5, y + 5, element.attributes.name.value);
+		$(shape.node).attr("class", "shape");
+	},
+
+	paintLabel : function(x, y, width, height, element) {
+		var shape = this.paper.rect(x, y, width, height, 1);
+		this.paper.text(x, y, element.attributes.name.value);
+		// $(shape.node).attr("class","shape");
+	},
+
+	getCss : function(bpmnElement, cssClass) {
+		for (i in this.highlighted) {
+			if (this.highlighted[i] == bpmnElement) {
+				cssClass += "-high";
+				break;
+			}
+		}
+		return cssClass;
+	}
+/* finished */
+}
